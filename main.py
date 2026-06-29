@@ -1,5 +1,9 @@
+import os
 import time
 import network
+import utime
+import ubinascii
+import uhashlib
 import uasyncio as asyncio
 
 from machine import Pin
@@ -10,23 +14,88 @@ computer = Pin(2, Pin.OUT)
 
 wlan = network.WLAN(network.STA_IF)
 
+_nonce       = ""
+_nonce_ts    = 0
+NONCE_TTL_MS = 5 * 60 * 1000
+
 HTML = """\
 <!DOCTYPE html>
 <html>
-<head><title>Pico W Computer Management</title></head>
+<head><title>Pico W</title></head>
 <body>
 <h1>Pico W - Computer Management</h1>
 %s
-<form method="POST" action="/computer">
-<input type="password" name="pwd" placeholder="Password" required>
-<button type="submit">Turn On/Off</button>
+<form id="form" method="POST" action="/computer">
+    <input type="hidden" id="nonce" name="nonce" value="%s">
+    <input type="hidden" id="hmac"  name="hmac">
+    <input type="password" id="pwd" placeholder="Password" required>
+    <button type="submit">Turn On/Off</button>
 </form>
+<script src="/crypto-js.min.js"></script>
+<script>
+document.getElementById('form').addEventListener('submit', async function(event) {
+    event.preventDefault();
+    const pwd   = document.getElementById('pwd').value;
+    const nonce = document.getElementById('nonce').value;
+    const hmac = CryptoJS.HmacSHA256(nonce, pwd).toString(CryptoJS.enc.Hex);
+
+    document.getElementById('hmac').value = hmac;
+    document.getElementById('pwd').value = '';
+    this.submit();
+});
+</script>
 </body>
 </html>
 """
+ 
+MSG_WRONG = "<p><strong>Wrong password.</strong></p>"
+MSG_OK = "<p>Signal sent to computer.</p>"
+MSG_EXPIRED = "<p><strong>Session expired, please reload the page.</strong></p>"
 
-MSG_WRONG  = "<p><strong>Wrong password.</strong></p>"
-MSG_OK  = "<p>Computer turned on/off</p>"
+def _new_nonce() -> str:
+    global _nonce, _nonce_ts
+    _nonce    = ubinascii.hexlify(os.urandom(16)).decode()
+    _nonce_ts = utime.ticks_ms()
+    return _nonce
+
+def _nonce_valid(received: str) -> bool:
+    expired = utime.ticks_diff(utime.ticks_ms(), _nonce_ts) > NONCE_TTL_MS
+    return (not expired) and (_nonce != "") and (received == _nonce)
+
+def _invalidate_nonce():
+    global _nonce, _nonce_ts
+    _nonce    = ""
+    _nonce_ts = 0
+
+def hmac_sha256(key: str, message: str) -> str:
+    BLOCK = 64
+    k = key.encode()     if isinstance(key,     str) else key
+    m = message.encode() if isinstance(message, str) else message
+ 
+    if len(k) > BLOCK:
+        k = uhashlib.sha256(k).digest()
+    k = k + b'\x00' * (BLOCK - len(k))
+
+    ipad = bytes(b ^ 0x36 for b in k)
+    opad = bytes(b ^ 0x5c for b in k)
+
+    ih = uhashlib.sha256()
+    ih.update(ipad)
+    ih.update(m)
+
+    oh = uhashlib.sha256()
+    oh.update(opad)
+    oh.update(ih.digest())
+
+    return ubinascii.hexlify(oh.digest()).decode()
+
+def ct_equal(a: str, b: str) -> bool:
+    if len(a) != len(b):
+        return False
+    result = 0
+    for x, y in zip(a.encode(), b.encode()):
+        result |= x ^ y
+    return result == 0
 
 def url_decode(s):
     s = s.replace("+", " ")
@@ -40,7 +109,6 @@ def url_decode(s):
             out.append(s[i])
             i += 1
     return "".join(out)
-
 
 def parse_form(body):
     params = {}
@@ -74,7 +142,6 @@ def _do_connect():
     print("Connection failed (status=%d)" % wlan.status())
     return False
 
-
 def connect_wifi():
     while True:
         print("Connecting to Wi-Fi…")
@@ -82,7 +149,6 @@ def connect_wifi():
             return
         wlan.disconnect()
         time.sleep(3)
-
 
 async def wifi_watchdog():
     while True:
@@ -104,7 +170,7 @@ async def serve_client(reader, writer):
 
         print("Request:", request_line.strip())
 
-        parts = request_line.decode().split()
+        parts  = request_line.decode().split()
         method = parts[0] if parts else "GET"
         path   = parts[1] if len(parts) > 1 else "/"
 
@@ -117,26 +183,47 @@ async def serve_client(reader, writer):
                 content_length = int(header.split(b":")[1].strip())
 
         message = ""
+
+        if method == "GET" and path == "/crypto-js.min.js":
+            with open("crypto-js.min.js", "rb") as f:
+                js = f.read()
+
+            writer.write(
+                "HTTP/1.0 200 OK\r\n"
+                "Content-Type: application/javascript\r\n"
+                "Content-Length: %d\r\n\r\n" % len(js)
+            )
+            writer.write(js)
+            await writer.drain()
+            return
+
         if method == "POST" and path == "/computer" and content_length > 0:
             body   = await reader.read(content_length)
             params = parse_form(body.decode())
-            pwd    = params.get("pwd", "")
 
-            if pwd != PASSWORD:
-                message = MSG_WRONG
+            received_nonce = params.get("nonce", "")
+            received_hmac  = params.get("hmac",  "")
+
+            if not _nonce_valid(received_nonce):
+                message = MSG_EXPIRED
             else:
-                asyncio.create_task(toggleComputer())
-                message = MSG_OK
+                expected = hmac_sha256(PASSWORD, received_nonce)
+                _invalidate_nonce()
+                if ct_equal(expected, received_hmac):
+                    asyncio.create_task(toggleComputer())
+                    message = MSG_OK
+                else:
+                    message = MSG_WRONG
 
+        nonce = _new_nonce()
         writer.write("HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n")
-        writer.write(HTML % message)
+        writer.write(HTML % (message, nonce))
         await writer.drain()
 
     except OSError as e:
         print("Client disconnected unexpectedly:", e)
     finally:
         await writer.wait_closed()
-
 
 async def main():
     print("Connecting to network…")
@@ -148,7 +235,6 @@ async def main():
 
     while True:
         await asyncio.sleep(60)
-
 
 try:
     asyncio.run(main())
