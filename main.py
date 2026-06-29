@@ -5,6 +5,7 @@ import utime
 import ubinascii
 import uhashlib
 import uasyncio as asyncio
+import ssl
 
 from machine import Pin
 from config import WIFI_SSID, WIFI_PASSWORD, PASSWORD
@@ -31,15 +32,23 @@ HTML = """\
     <input type="password" id="pwd" placeholder="Password" required>
     <button type="submit">Turn On/Off</button>
 </form>
-<script src="/crypto-js.min.js"></script>
 <script>
 document.getElementById('form').addEventListener('submit', async function(event) {
     event.preventDefault();
     const pwd   = document.getElementById('pwd').value;
     const nonce = document.getElementById('nonce').value;
-    const hmac = CryptoJS.HmacSHA256(nonce, pwd).toString(CryptoJS.enc.Hex);
+    const enc   = new TextEncoder();
+    const key   = await crypto.subtle.importKey(
+        'raw', enc.encode(pwd),
+        {name: 'HMAC', hash: 'SHA-256'},
+        false, ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(nonce));
+    document.getElementById('hmac').value =
+        Array.from(new Uint8Array(sig))
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
 
-    document.getElementById('hmac').value = hmac;
     document.getElementById('pwd').value = '';
     this.submit();
 });
@@ -229,8 +238,17 @@ async def main():
     print("Connecting to network…")
     connect_wifi()
 
-    print("Starting web server on port 80…")
-    asyncio.create_task(asyncio.start_server(serve_client, "0.0.0.0", 80))
+    print("Starting web server on port 443…")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain("cert.der", "key.der")
+    asyncio.create_task(
+        asyncio.start_server(
+            serve_client,
+            "0.0.0.0",
+            443,
+            ssl=ctx,
+        )
+    )
     asyncio.create_task(wifi_watchdog())
 
     while True:
