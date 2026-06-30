@@ -173,7 +173,16 @@ async def wifi_watchdog():
 
 async def serve_client(reader, writer):
     try:
-        request_line = await reader.readline()
+        HEADER_TIMEOUT_MS = 5000
+        start = utime.ticks_ms()
+
+        try:
+            request_line = await asyncio.wait_for(reader.readline(), 5)
+        except asyncio.TimeoutError:
+            return
+
+        if utime.ticks_diff(utime.ticks_ms(), start) > HEADER_TIMEOUT_MS:
+            return
         if not request_line:
             return
 
@@ -185,13 +194,26 @@ async def serve_client(reader, writer):
 
         content_length = 0
         while True:
-            header = await reader.readline()
+            if utime.ticks_diff(utime.ticks_ms(), start) > HEADER_TIMEOUT_MS:
+                return
+            try:
+                header = await asyncio.wait_for(reader.readline(), 5)
+            except asyncio.TimeoutError:
+                return
             if header == b"\r\n":
                 break
             if header.lower().startswith(b"content-length:"):
                 content_length = int(header.split(b":")[1].strip())
 
         message = ""
+
+        if content_length > 256:
+            writer.write(
+                "HTTP/1.0 413 Payload Too Large\r\n"
+                "Connection: close\r\n\r\n"
+            )
+            await writer.drain()
+            return
 
         if method == "POST" and path == "/computer" and content_length > 0:
             body   = await reader.read(content_length)
