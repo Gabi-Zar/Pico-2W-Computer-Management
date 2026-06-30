@@ -193,19 +193,6 @@ async def serve_client(reader, writer):
 
         message = ""
 
-        if method == "GET" and path == "/crypto-js.min.js":
-            with open("crypto-js.min.js", "rb") as f:
-                js = f.read()
-
-            writer.write(
-                "HTTP/1.0 200 OK\r\n"
-                "Content-Type: application/javascript\r\n"
-                "Content-Length: %d\r\n\r\n" % len(js)
-            )
-            writer.write(js)
-            await writer.drain()
-            return
-
         if method == "POST" and path == "/computer" and content_length > 0:
             body   = await reader.read(content_length)
             params = parse_form(body.decode())
