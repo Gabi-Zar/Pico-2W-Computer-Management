@@ -316,6 +316,15 @@ async def serve_client(reader, writer):
             )
             await writer.drain()
             return
+        
+        if method == "GET" and path == "/favicon.ico":
+            writer.write(
+                "HTTP/1.0 204 No Content\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            )
+            await writer.drain()
+            return
 
         if method == "POST" and path == "/computer" and content_length > 0:
             body   = await reader.read(content_length)
