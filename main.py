@@ -22,15 +22,117 @@ NONCE_TTL_MS = 5 * 60 * 1000
 HTML = """\
 <!DOCTYPE html>
 <html>
-<head><title>Pico W</title></head>
+<head>
+    <title>Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            background: #2b2b2b;
+            background-image: linear-gradient(#3a3a3a 1px, transparent 1px), linear-gradient(90deg, #3a3a3a 1px, transparent 1px);
+            background-size: 40px 40px;
+
+            display: flex;
+            justify-content: center;
+            align-items: center;
+
+            font-family: Arial;
+            color: #e8e8e8;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 50px;
+
+            padding: 60px;
+            width: 680px;
+            height: 800px;
+
+            background: linear-gradient(#5a5a5a, #404040);
+            border: 2px solid #777;
+            border-radius: 12px;
+
+            box-shadow:
+                inset 0 2px 2px rgba(255, 255, 255, 0.15),
+                inset 0 -2px 2px rgba(0, 0, 0, 0.4),
+                0 20px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        h1,
+        p {
+            text-align: center;
+            font-size: 3rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        p {
+            font-size: 2rem;
+        }
+
+        input[type="password"] {
+            width: 100%%;
+            padding: 18px;
+
+            font-size: 20px;
+            text-align: center;
+
+            color: white;
+            background: #222;
+
+            border: 2px solid #777;
+            border-radius: 6px;
+
+            outline: none;
+        }
+
+        input[type="password"]:focus {
+            border-color: #ff4d4d;
+        }
+
+        button {
+            width: 250px;
+            height: 250px;
+            border: none;
+            border-radius: 50%%;
+            cursor: pointer;
+
+            background: linear-gradient(#ff4d4d, #cf2c2c);
+            color: white;
+            font-size: 40px;
+
+            box-shadow:
+                0 18px 0 #8b2525,
+                0 28px 40px rgba(0, 0, 0, 0.35);
+
+            transition:
+                transform 0.1s,
+                box-shadow 0.1s;
+        }
+
+        button:active {
+            transform: translateY(18px);
+            box-shadow:
+                0 0 0 #8b2525,
+                0 10px 18px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
 <body>
-<h1>Pico W - Computer Management</h1>
-%s
 <form id="form" method="POST" action="/computer">
+    <h1>WARNING DANGER</h1>
+    %s
     <input type="hidden" id="nonce" name="nonce" value="%s">
     <input type="hidden" id="hmac"  name="hmac">
-    <input type="password" id="pwd" placeholder="Password" required>
-    <button type="submit">Turn On/Off</button>
+    <input type="password" id="pwd" placeholder="Secret Code" required>
+    <button type="submit">POWER</button>
 </form>
 <script>
 document.getElementById('form').addEventListener('submit', async function(event) {
